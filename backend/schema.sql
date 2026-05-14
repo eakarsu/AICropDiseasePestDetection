@@ -284,3 +284,60 @@ CREATE TABLE analytics_data (
   recorded_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- 16. AI Results audit trail
+CREATE TABLE IF NOT EXISTS ai_results (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  endpoint VARCHAR(100) NOT NULL,
+  entity_type VARCHAR(50),
+  entity_id INTEGER,
+  model VARCHAR(100),
+  result JSONB,
+  usage_tokens INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_results_endpoint ON ai_results(endpoint);
+CREATE INDEX IF NOT EXISTS idx_ai_results_entity ON ai_results(entity_type, entity_id);
+
+-- 17. Treatment efficacy log (proposed feature: Treatment Efficacy Tracker)
+CREATE TABLE IF NOT EXISTS treatment_efficacy (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  field_name VARCHAR(100),
+  crop_name VARCHAR(100),
+  treatment_name VARCHAR(200),
+  applied_at DATE,
+  health_score_before INTEGER,
+  health_score_after INTEGER,
+  weeks_observed INTEGER,
+  efficacy_score INTEGER,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 18. Field scout image uploads (proposed: Integrated Field Scout Reports)
+CREATE TABLE IF NOT EXISTS field_scout_reports (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  field_name VARCHAR(100),
+  crop_name VARCHAR(100),
+  image_url TEXT,
+  ai_detection JSONB,
+  confidence_pct INTEGER,
+  urgency VARCHAR(20),
+  reported_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 19. Weather-triggered alerts (proposed: Weather-Triggered Auto-Alerts)
+CREATE TABLE IF NOT EXISTS weather_alerts (
+  id SERIAL PRIMARY KEY,
+  field_name VARCHAR(100),
+  region VARCHAR(200),
+  trigger_condition VARCHAR(200),
+  pest_risk VARCHAR(200),
+  severity VARCHAR(20),
+  forecast JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);

@@ -12,7 +12,8 @@ export default function Dashboard() {
     api.get('/dashboard/stats').then(r => setStats(r.data)).catch(() => {});
     featureConfig.forEach(f => {
       api.get(f.apiPath).then(r => {
-        setCounts(prev => ({ ...prev, [f.path]: r.data.length }));
+        const total = r.data?.total ?? (Array.isArray(r.data) ? r.data.length : (r.data?.data?.length || 0));
+        setCounts(prev => ({ ...prev, [f.path]: total }));
       }).catch(() => {});
     });
   }, []);

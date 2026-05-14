@@ -3,16 +3,48 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const multer = require('multer');
+const { body, validationResult } = require('express-validator');
+let helmet;
+try { helmet = require('helmet'); } catch (_) { helmet = null; }
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const pool = require('./db');
-const { queryAI } = require('./openrouter');
+const { queryAI, parseAIJson } = require('./openrouter');
+const { aiRateLimiter, generalLimiter } = require('./rateLimiter');
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 4000;
 
-app.use(cors());
+// Helmet security headers
+if (helmet) app.use(helmet({ contentSecurityPolicy: false }));
+
+// CORS — env-driven allow list
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:5173')
+  .split(',').map((o) => o.trim()).filter(Boolean);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
+}));
+
 app.use(express.json({ limit: '10mb' }));
+app.use(generalLimiter);
+
+// Multer — images only, max 10 MB
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\//.test(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  },
+});
 
 // Auth middleware
 function authMiddleware(req, res, next) {
@@ -25,6 +57,44 @@ function authMiddleware(req, res, next) {
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
   }
+}
+
+// Validation helper
+function validate(req, res, next) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(422).json({ errors: errors.array() });
+  next();
+}
+
+// ── Allowed column names per table (prevents SQL injection in dynamic queries) ──
+const ALLOWED_COLUMNS = {
+  disease_detections: ['crop_name','disease_name','symptoms','severity','location','field_name','notes','image_url','status','treatment_applied','user_id'],
+  pest_identifications: ['crop_name','pest_name','pest_type','damage_level','description','location','field_name','notes','image_url','status','user_id'],
+  crop_health: ['crop_name','field_name','health_score','growth_stage','ndvi_value','chlorophyll_level','water_stress','notes','assessment_date','user_id'],
+  treatment_recommendations: ['disease_or_pest','crop_name','treatment_name','application_rate','timing','safety_precautions','organic_alternative','cost_estimate','effectiveness_rating','notes','user_id'],
+  weather_risks: ['location','temperature','humidity','rainfall','risk_type','risk_level','disease_risk','pest_risk','notes','recorded_at','user_id'],
+  soil_analyses: ['field_name','soil_type','ph_level','nitrogen_level','phosphorus_level','potassium_level','organic_matter','texture','moisture','notes','sample_date','user_id'],
+  crop_calendar: ['crop_name','activity','season','scheduled_date','actual_date','status','notes','field_name','user_id'],
+  pest_alerts: ['alert_title','pest_name','region','severity','affected_crops','is_active','description','source','expiry_date'],
+  disease_history: ['crop_name','disease_name','occurrence_date','treatment_used','outcome','crop_loss_percentage','field_name','notes','season','user_id'],
+  community_reports: ['report_type','title','description','location','crop_affected','severity','status','verified','image_url','user_id'],
+  expert_consultations: ['question','crop_name','specialization','status','expert_response','consultation_date','user_id'],
+  marketplace_items: ['item_name','category','description','price','unit','supplier','in_stock','image_url','user_id'],
+  farm_management: ['farm_name','field_name','crop_name','area_size','area_unit','irrigation_type','status','notes','planting_date','expected_harvest','user_id'],
+  knowledge_base: ['title','category','content','crop_type','disease_or_pest','region','difficulty_level','tags','ai_enhanced_content'],
+  analytics_data: ['metric_name','metric_value','metric_unit','category','period','crop_name','comparison_value','trend','ai_insight','recorded_at','user_id'],
+};
+
+function sanitizeData(tableName, data) {
+  const allowed = ALLOWED_COLUMNS[tableName];
+  if (!allowed) return data; // unknown table — pass through
+  const clean = {};
+  for (const key of Object.keys(data)) {
+    if (allowed.includes(key)) {
+      clean[key] = data[key];
+    }
+  }
+  return clean;
 }
 
 // ==================== AUTH ROUTES ====================
@@ -72,11 +142,17 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 function createCRUD(tableName, displayName, aiPromptGenerator) {
   const router = express.Router();
 
-  // GET all
+  // GET all (paginated)
   router.get('/', authMiddleware, async (req, res) => {
     try {
-      const result = await pool.query(`SELECT * FROM ${tableName} ORDER BY created_at DESC`);
-      res.json(result.rows);
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+      const offset = (page - 1) * limit;
+      const [data, count] = await Promise.all([
+        pool.query(`SELECT * FROM ${tableName} ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset]),
+        pool.query(`SELECT COUNT(*) FROM ${tableName}`),
+      ]);
+      res.json({ data: data.rows, total: parseInt(count.rows[0].count), page, limit });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -93,11 +169,13 @@ function createCRUD(tableName, displayName, aiPromptGenerator) {
     }
   });
 
-  // POST create
+  // POST create — sanitize input
   router.post('/', authMiddleware, async (req, res) => {
     try {
-      const data = { ...req.body, user_id: req.userId };
+      const raw = { ...req.body, user_id: req.userId };
+      const data = sanitizeData(tableName, raw);
       const keys = Object.keys(data);
+      if (keys.length === 0) return res.status(400).json({ error: 'No valid fields provided' });
       const values = Object.values(data);
       const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
       const result = await pool.query(
@@ -110,13 +188,15 @@ function createCRUD(tableName, displayName, aiPromptGenerator) {
     }
   });
 
-  // PUT update
+  // PUT update — sanitize input
   router.put('/:id', authMiddleware, async (req, res) => {
     try {
-      const data = req.body;
-      delete data.id;
-      delete data.created_at;
+      const raw = { ...req.body };
+      delete raw.id;
+      delete raw.created_at;
+      const data = sanitizeData(tableName, raw);
       const keys = Object.keys(data);
+      if (keys.length === 0) return res.status(400).json({ error: 'No valid fields provided' });
       const values = Object.values(data);
       const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
       const result = await pool.query(
@@ -143,7 +223,7 @@ function createCRUD(tableName, displayName, aiPromptGenerator) {
 
   // AI analyze
   if (aiPromptGenerator) {
-    router.post('/ai-analyze', authMiddleware, async (req, res) => {
+    router.post('/ai-analyze', authMiddleware, aiRateLimiter, async (req, res) => {
       try {
         const prompt = aiPromptGenerator(req.body);
         const aiResult = await queryAI(prompt);
@@ -199,12 +279,12 @@ app.use('/api/pest-alerts', createCRUD('pest_alerts', 'Pest Alert', (data) =>
   `Analyze pest alert: Alert: ${data.alert_title || 'Unknown'}, Pest: ${data.pest_name || 'Unknown'}, Region: ${data.region || 'Unknown'}, Severity: ${data.severity || 'Unknown'}, Affected Crops: ${data.affected_crops || 'Various'}. Provide risk assessment, prevention strategies, and response recommendations.`
 ));
 
-// 9. Disease History
+// 9. Disease History (paginated via generic CRUD)
 app.use('/api/disease-history', createCRUD('disease_history', 'Disease History', (data) =>
   `Analyze disease history pattern: Crop: ${data.crop_name || 'Unknown'}, Disease: ${data.disease_name || 'Unknown'}, Occurrence: ${data.occurrence_date || 'Unknown'}, Treatment Used: ${data.treatment_used || 'None'}, Outcome: ${data.outcome || 'Unknown'}, Crop Loss: ${data.crop_loss_percentage || 'N/A'}%. Provide pattern analysis, prevention recommendations, and lessons for future seasons.`
 ));
 
-// 10. Community Reports
+// 10. Community Reports (paginated via generic CRUD)
 app.use('/api/community-reports', createCRUD('community_reports', 'Community Report', (data) =>
   `Verify and analyze community report: Type: ${data.report_type || 'Unknown'}, Title: ${data.title || 'Unknown'}, Description: ${data.description || 'Not provided'}, Location: ${data.location || 'Unknown'}, Crop: ${data.crop_affected || 'Unknown'}, Severity: ${data.severity || 'Unknown'}. Assess credibility, provide context, and suggest community response.`
 ));
@@ -224,12 +304,18 @@ app.use('/api/farm-management', createCRUD('farm_management', 'Farm Record', (da
   `Provide farm management advice: Farm: ${data.farm_name || 'Unknown'}, Field: ${data.field_name || 'Unknown'}, Crop: ${data.crop_name || 'Unknown'}, Area: ${data.area_size || 'N/A'} ${data.area_unit || 'acres'}, Irrigation: ${data.irrigation_type || 'Unknown'}, Status: ${data.status || 'Unknown'}. Provide management tips, expected timeline, and optimization recommendations.`
 ));
 
-// 14. Knowledge Base (no auth required for reading)
+// 14. Knowledge Base (paginated, no auth required for reading)
 const kbRouter = express.Router();
 kbRouter.get('/', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM knowledge_base ORDER BY views DESC');
-    res.json(result.rows);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+    const [data, count] = await Promise.all([
+      pool.query('SELECT * FROM knowledge_base ORDER BY views DESC LIMIT $1 OFFSET $2', [limit, offset]),
+      pool.query('SELECT COUNT(*) FROM knowledge_base'),
+    ]);
+    res.json({ data: data.rows, total: parseInt(count.rows[0].count), page, limit });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -246,8 +332,9 @@ kbRouter.get('/:id', async (req, res) => {
 });
 kbRouter.post('/', authMiddleware, async (req, res) => {
   try {
-    const data = req.body;
+    const data = sanitizeData('knowledge_base', req.body);
     const keys = Object.keys(data);
+    if (keys.length === 0) return res.status(400).json({ error: 'No valid fields provided' });
     const values = Object.values(data);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
     const result = await pool.query(
@@ -261,10 +348,12 @@ kbRouter.post('/', authMiddleware, async (req, res) => {
 });
 kbRouter.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const data = req.body;
-    delete data.id;
-    delete data.created_at;
+    const raw = { ...req.body };
+    delete raw.id;
+    delete raw.created_at;
+    const data = sanitizeData('knowledge_base', raw);
     const keys = Object.keys(data);
+    if (keys.length === 0) return res.status(400).json({ error: 'No valid fields provided' });
     const values = Object.values(data);
     const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
     const result = await pool.query(
@@ -284,7 +373,7 @@ kbRouter.delete('/:id', authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-kbRouter.post('/ai-analyze', authMiddleware, async (req, res) => {
+kbRouter.post('/ai-analyze', authMiddleware, aiRateLimiter, async (req, res) => {
   try {
     const prompt = `Enhance this knowledge base article: Title: ${req.body.title || 'Unknown'}, Category: ${req.body.category || 'General'}, Content: ${req.body.content || 'Not provided'}. Provide enhanced, comprehensive content with practical advice for farmers.`;
     const aiResult = await queryAI(prompt);
@@ -323,9 +412,10 @@ app.get('/api/dashboard/stats', authMiddleware, async (req, res) => {
 });
 
 // General AI Chat
-app.post('/api/ai/chat', authMiddleware, async (req, res) => {
+app.post('/api/ai/chat', authMiddleware, aiRateLimiter, async (req, res) => {
   try {
     const { message, context } = req.body;
+    if (!message) return res.status(400).json({ error: 'message is required' });
     const result = await queryAI(message, context);
     res.json(result);
   } catch (err) {
@@ -333,6 +423,304 @@ app.post('/api/ai/chat', authMiddleware, async (req, res) => {
   }
 });
 
+// ── POST /api/crop-diseases/analyze-image — vision-based disease detection ──
+app.post('/api/crop-diseases/analyze-image', authMiddleware, aiRateLimiter, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey || apiKey === 'your_openrouter_key_here') {
+      return res.status(503).json({ error: 'OpenRouter API key not configured.' });
+    }
+
+    const base64 = req.file.buffer.toString('base64');
+    const mediaType = req.file.mimetype || 'image/jpeg';
+    const cropHint = req.body.crop_type || 'unknown crop';
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'http://localhost:3000',
+        'X-Title': 'AI Crop Disease & Pest Detection',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-3-5-sonnet-20241022',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert agronomist and plant pathologist with deep knowledge of crop diseases, pest management, and sustainable agriculture practices.',
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mediaType,
+                  data: base64,
+                },
+              },
+              {
+                type: 'text',
+                text: `Analyze this crop image for diseases and pest damage. The crop is: ${cropHint}.
+
+Please provide:
+1. Disease/Pest Identification (name, type, confidence level)
+2. Symptom Description (what you observe in the image)
+3. Severity Assessment (mild / moderate / severe)
+4. Affected Area Estimate (% of plant/field visible)
+5. Recommended Treatment (immediate and long-term)
+6. Organic Alternatives
+7. Prevention Strategies
+8. Urgency Level (Low / Medium / High / Critical)`,
+              },
+            ],
+          },
+        ],
+        temperature: 0.5,
+        max_tokens: 1500,
+      }),
+    });
+
+    const data = await response.json();
+    if (data.error) return res.status(500).json({ error: data.error.message || 'Vision analysis failed' });
+
+    res.json({
+      analysis: data.choices?.[0]?.message?.content || 'No analysis generated',
+      model: data.model,
+      usage: data.usage || null,
+      crop_type: cropHint,
+      image_size_bytes: req.file.size,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/ai/integrated-pest-management ────────────────────────────────
+app.post(
+  '/api/ai/integrated-pest-management',
+  authMiddleware,
+  aiRateLimiter,
+  [
+    body('pest_type').notEmpty().withMessage('pest_type is required'),
+    body('crop_type').notEmpty().withMessage('crop_type is required'),
+    body('infestation_level')
+      .isIn(['low', 'medium', 'high', 'severe'])
+      .withMessage('infestation_level must be low, medium, high, or severe'),
+    body('organic_only').optional().isBoolean().withMessage('organic_only must be boolean'),
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const { pest_type, crop_type, infestation_level, organic_only } = req.body;
+      const prompt = `
+Create a comprehensive Integrated Pest Management (IPM) strategy for the following situation:
+
+Pest Type: ${pest_type}
+Crop: ${crop_type}
+Infestation Level: ${infestation_level}
+Organic Only: ${organic_only ? 'YES — only organic/biological methods' : 'No restriction'}
+
+Provide a full IPM strategy covering:
+
+1. Biological Controls
+   - Natural predators / parasitoids
+   - Microbial pesticides (if applicable)
+   - Habitat manipulation
+
+2. Cultural Controls
+   - Crop rotation recommendations
+   - Planting date adjustments
+   - Resistant varieties
+   - Sanitation practices
+
+3. Chemical Controls${organic_only ? ' (organic/approved only)' : ''}
+   - Recommended products with active ingredients
+   - Application rates and timing
+   - Pre-harvest interval
+   - Safety precautions and PPE
+
+4. Monitoring Protocol
+   - Scouting frequency and method
+   - Economic threshold (when to act)
+   - Record keeping
+
+5. Economic Impact Assessment
+   - Expected crop loss without treatment
+   - Cost-benefit of each control method
+   - Break-even analysis
+
+6. 30-Day Action Plan (week by week)`.trim();
+
+      const result = await queryAI(prompt);
+      res.json({ pest_type, crop_type, infestation_level, organic_only: !!organic_only, ipm_strategy: result.response, model: result.model });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ── POST /api/ai/harvest-timing ────────────────────────────────────────────
+app.post(
+  '/api/ai/harvest-timing',
+  authMiddleware,
+  aiRateLimiter,
+  [
+    body('crop_type').notEmpty().withMessage('crop_type is required'),
+    body('plant_date').notEmpty().withMessage('plant_date is required'),
+    body('current_conditions').notEmpty().withMessage('current_conditions is required'),
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const { crop_type, plant_date, current_conditions } = req.body;
+      const prompt = `
+Determine the optimal harvest timing for the following crop:
+
+Crop Type: ${crop_type}
+Plant Date: ${plant_date}
+Current Field Conditions: ${JSON.stringify(current_conditions)}
+
+Please provide:
+
+1. Optimal Harvest Window
+   - Earliest harvest date (with rationale)
+   - Peak harvest date (maximum quality/yield)
+   - Latest acceptable harvest date
+
+2. Harvest Readiness Indicators
+   - Visual cues to look for
+   - Measurable parameters (Brix, moisture, color, firmness)
+   - Field tests to confirm readiness
+
+3. Disease Pressure Impact
+   - Current disease risks that may affect timing
+   - Quality risks if delayed
+   - Post-harvest disease risk assessment
+
+4. Weather Considerations
+   - Ideal weather window for harvest
+   - Risks of harvesting in current conditions
+   - How to adjust if rain is forecast
+
+5. Yield Forecast at Different Harvest Times
+   - Early harvest: estimated yield %
+   - Optimal harvest: estimated yield %
+   - Late harvest: estimated yield %
+
+6. Post-Harvest Handling
+   - Storage recommendations
+   - Conditioning requirements
+   - Shelf life expectation`.trim();
+
+      const result = await queryAI(prompt);
+      res.json({ crop_type, plant_date, harvest_timing: result.response, model: result.model });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ── POST /api/ai/yield-forecast ────────────────────────────────────────────
+app.post(
+  '/api/ai/yield-forecast',
+  authMiddleware,
+  aiRateLimiter,
+  [
+    body('field_data').notEmpty().withMessage('field_data is required'),
+    body('historical_yields').notEmpty().withMessage('historical_yields is required'),
+    body('current_conditions').notEmpty().withMessage('current_conditions is required'),
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const { field_data, historical_yields, current_conditions } = req.body;
+      const prompt = `
+Generate a crop yield forecast based on the following data:
+
+Field Data: ${JSON.stringify(field_data)}
+Historical Yields: ${JSON.stringify(historical_yields)}
+Current Growing Conditions: ${JSON.stringify(current_conditions)}
+
+Provide a comprehensive yield forecast including:
+
+1. Yield Forecast
+   - Base yield estimate (most likely scenario)
+   - Optimistic scenario (upper bound)
+   - Pessimistic scenario (lower bound)
+   - Confidence interval (e.g., ± X% with 80% confidence)
+
+2. Key Yield Drivers
+   - Positive factors boosting yield
+   - Risk factors reducing yield
+   - Relative weight of each factor
+
+3. Comparison to Historical Average
+   - Year-over-year comparison
+   - How this season compares to the last 3-5 years
+
+4. Risk Scenarios
+   - Impact of disease outbreak (yield loss %)
+   - Impact of extreme weather event
+   - Impact of pest pressure
+
+5. Agronomic Recommendations to Improve Yield
+   - Top 3 actions to take now
+   - Expected yield improvement from each action
+
+6. Financial Projection
+   - Estimated gross revenue at forecast yield
+   - Break-even yield requirement
+   - Margin of safety`.trim();
+
+      const result = await queryAI(prompt);
+      res.json({ yield_forecast: result.response, model: result.model, field_data, current_conditions });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ── Mount AI advanced routes ─────────────────────────────────────────────────
+const makeAIAdvancedRouter = require('./aiAdvanced');
+app.use('/api/ai-advanced', makeAIAdvancedRouter({ authMiddleware }));
+
+app.use('/api/ai', require('./multimodalHealth'));
+
+
+app.use('/api/ai', require('./decisionSupport'));
+
+app.use('/api/ai', require('./supplyChainCoord'));
+
+app.use('/api/ai', require('./ipmAutomation'));
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-marketplace-expert-consultations-lack-ai-driven-matching', require('./gap_marketplace_expert_consultations_lack_ai_driven_matching'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-farm-management-lacks-ai-yield-forecasting-endpoint', require('./gap_farm_management_lacks_ai_yield_forecasting_endpoint'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-community-reports-lacks-ai-moderation-clustering', require('./gap_community_reports_lacks_ai_moderation_clustering'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-no-mobile-field-capture-app-surfaces-beyond-rest-api', require('./gap_no_mobile_field_capture_app_surfaces_beyond_rest_api'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-no-webhooks-for-sensor-weather-pushes', require('./gap_no_webhooks_for_sensor_weather_pushes'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-no-sms-or-push-notifications', require('./gap_no_sms_or_push_notifications'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-no-payment-marketplace-transaction-handling', require('./gap_no_payment_marketplace_transaction_handling'));
+
+// // === Batch 02 Gaps & Frontend Mounts ===
+app.use('/api/gap-no-calendar-integration-only-internal-crop-calendar', require('./gap_no_calendar_integration_only_internal_crop_calendar'));
+
 app.listen(PORT, () => {
-  console.log(`🌱 CropGuard AI Backend running on port ${PORT}`);
+  console.log(`CropGuard AI Backend running on port ${PORT}`);
 });

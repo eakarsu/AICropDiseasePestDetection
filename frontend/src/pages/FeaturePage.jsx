@@ -215,7 +215,9 @@ export default function FeaturePage({ config }) {
   const loadItems = useCallback(async () => {
     try {
       const res = await api.get(config.apiPath);
-      setItems(res.data);
+      // Backend may return { data, total, page, limit } (paginated) or array
+      const list = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setItems(list);
     } catch (err) {
       toast.error(`Failed to load ${config.name}`);
     } finally {
