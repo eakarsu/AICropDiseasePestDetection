@@ -21,6 +21,9 @@ import GapNoSmsOrPushNotifications from './pages/GapNoSmsOrPushNotifications';
 import GapNoPaymentMarketplaceTransactionHandling from './pages/GapNoPaymentMarketplaceTransactionHandling';
 import GapNoCalendarIntegrationOnlyInternalCropCalendar from './pages/GapNoCalendarIntegrationOnlyInternalCropCalendar';
 
+// // === Custom Views (Field Analytics) ===
+import CustomViewsPage from './pages/CustomViewsPage';
+
 function Sidebar({ user, onLogout }) {
   const location = useLocation();
 
@@ -48,6 +51,11 @@ function Sidebar({ user, onLogout }) {
             <span className="nav-icon">🤖</span> AI Advanced
           </Link>
         </li>
+        <li>
+          <Link to="/custom-views" className={location.pathname === '/custom-views' ? 'active' : ''}>
+            <span className="nav-icon">🗺️</span> Field Analytics
+          </Link>
+        </li>
       </ul>
       <div className="sidebar-user">
         <div className="user-name">{user?.full_name}</div>
@@ -71,6 +79,7 @@ function AppLayout({ user, onLogout }) {
             <Route key={f.path} path={f.path} element={<FeaturePage config={f} />} />
           ))}
           <Route path="/ai-advanced" element={<AIAdvanced />} />
+          <Route path="/custom-views" element={<CustomViewsPage />} />
           <Route path="*" element={<Navigate to="/dashboard" />} />
         
         {/* // === Batch 02 Gaps & Frontend Mounts === */}

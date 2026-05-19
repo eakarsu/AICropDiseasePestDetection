@@ -721,6 +721,12 @@ app.use('/api/gap-no-payment-marketplace-transaction-handling', require('./gap_n
 // // === Batch 02 Gaps & Frontend Mounts ===
 app.use('/api/gap-no-calendar-integration-only-internal-crop-calendar', require('./gap_no_calendar_integration_only_internal_crop_calendar'));
 
+// // === Custom Views (Field Analytics) ===
+app.use('/api/custom-views', require('./routes/customViews'));
+
+// // === Health ===
+app.get('/api/health', (req, res) => res.json({ status: 'ok', service: 'crop-disease-backend', ts: Date.now() }));
+
 app.listen(PORT, () => {
   console.log(`CropGuard AI Backend running on port ${PORT}`);
 });
