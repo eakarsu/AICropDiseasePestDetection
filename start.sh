@@ -15,8 +15,8 @@ CYAN='\033[1;36m'
 NC='\033[0m'
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_PORT=4000
-FRONTEND_PORT=3000
+BACKEND_PORT=4400
+FRONTEND_PORT=3400
 
 echo -e "${GREEN}"
 echo "  ╔═══════════════════════════════════════════════╗"
@@ -116,13 +116,13 @@ echo -e "\n${YELLOW}[6/6] Starting servers with hot reload...${NC}"
 
 # Start backend with nodemon for hot reload
 cd "$PROJECT_DIR/backend"
-npx nodemon --watch . --ext js,json server.js &
+BACKEND_PORT=$BACKEND_PORT npx nodemon --watch . --ext js,json server.js &
 BACKEND_PID=$!
 echo -e "  ${GREEN}Backend starting on port $BACKEND_PORT (PID: $BACKEND_PID)${NC}"
 
 # Start frontend with Vite (has built-in HMR)
 cd "$PROJECT_DIR/frontend"
-npx vite --port $FRONTEND_PORT --host &
+BACKEND_PORT=$BACKEND_PORT FRONTEND_PORT=$FRONTEND_PORT npx vite --port $FRONTEND_PORT --host &
 FRONTEND_PID=$!
 echo -e "  ${GREEN}Frontend starting on port $FRONTEND_PORT (PID: $FRONTEND_PID)${NC}"
 

@@ -138,6 +138,25 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/harvest-disease-window', authMiddleware, (req, res) => {
+  const body = req.body || {};
+  const humidity = Number(body.humidity_pct || 0);
+  const rain = Number(body.rain_forecast_mm || 0);
+  const days = Number(body.days_to_harvest || 0);
+  const pressure = Math.min(100, Math.round(humidity * 0.45 + rain * 1.4 + Math.max(0, 14 - days) * 2));
+  res.json({
+    crop: body.crop || 'crop',
+    field: body.field || 'field',
+    risk_score: pressure,
+    window: pressure >= 70 ? 'harvest early or treat immediately' : pressure >= 40 ? 'tight scouting window' : 'standard harvest window',
+    actions: [
+      pressure >= 70 ? 'Scout within 24 hours and protect harvestable blocks.' : 'Maintain normal scouting cadence.',
+      rain > 10 ? 'Avoid spray timing before forecast rain.' : 'Spray timing is not rain-blocked.',
+      days <= 7 ? 'Check pre-harvest interval before any treatment.' : 'Treatment interval remains feasible.',
+    ],
+  });
+});
+
 // ==================== GENERIC CRUD HELPER ====================
 function createCRUD(tableName, displayName, aiPromptGenerator) {
   const router = express.Router();

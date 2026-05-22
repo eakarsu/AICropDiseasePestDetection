@@ -23,6 +23,10 @@ import GapNoCalendarIntegrationOnlyInternalCropCalendar from './pages/GapNoCalen
 
 // // === Custom Views (Field Analytics) ===
 import CustomViewsPage from './pages/CustomViewsPage';
+import HarvestDiseaseWindow from './pages/HarvestDiseaseWindow';
+
+import CodexCustomVizFeature from './pages/CodexCustomVizFeature';
+import CodexOperationsFeature from './pages/CodexOperationsFeature';
 
 function Sidebar({ user, onLogout }) {
   const location = useLocation();
@@ -46,6 +50,11 @@ function Sidebar({ user, onLogout }) {
             </Link>
           </li>
         ))}
+        <li>
+          <Link to="/harvest-disease-window" className={location.pathname === '/harvest-disease-window' ? 'active' : ''}>
+            <span className="nav-icon">🌾</span> Harvest Disease Window
+          </Link>
+        </li>
         <li>
           <Link to="/ai-advanced" className={location.pathname === '/ai-advanced' ? 'active' : ''}>
             <span className="nav-icon">🤖</span> AI Advanced
@@ -74,11 +83,15 @@ function AppLayout({ user, onLogout }) {
       <Sidebar user={user} onLogout={onLogout} />
       <div className="main-content">
         <Routes>
+        <Route path="/codex/custom-viz" element={<CodexCustomVizFeature />} />
+        <Route path="/codex/operations" element={<CodexOperationsFeature />} />
+
           <Route path="/dashboard" element={<Dashboard />} />
           {featureConfig.map((f) => (
             <Route key={f.path} path={f.path} element={<FeaturePage config={f} />} />
           ))}
           <Route path="/ai-advanced" element={<AIAdvanced />} />
+          <Route path="/harvest-disease-window" element={<HarvestDiseaseWindow />} />
           <Route path="/custom-views" element={<CustomViewsPage />} />
           <Route path="*" element={<Navigate to="/dashboard" />} />
         
