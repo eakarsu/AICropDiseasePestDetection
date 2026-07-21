@@ -53,6 +53,7 @@ function authMiddleware(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
+    req.user = decoded;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid token' });
@@ -716,29 +717,8 @@ app.use('/api/ai', require('./decisionSupport'));
 app.use('/api/ai', require('./supplyChainCoord'));
 
 app.use('/api/ai', require('./ipmAutomation'));
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-marketplace-expert-consultations-lack-ai-driven-matching', require('./gap_marketplace_expert_consultations_lack_ai_driven_matching'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-farm-management-lacks-ai-yield-forecasting-endpoint', require('./gap_farm_management_lacks_ai_yield_forecasting_endpoint'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-community-reports-lacks-ai-moderation-clustering', require('./gap_community_reports_lacks_ai_moderation_clustering'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-mobile-field-capture-app-surfaces-beyond-rest-api', require('./gap_no_mobile_field_capture_app_surfaces_beyond_rest_api'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-webhooks-for-sensor-weather-pushes', require('./gap_no_webhooks_for_sensor_weather_pushes'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-sms-or-push-notifications', require('./gap_no_sms_or_push_notifications'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-payment-marketplace-transaction-handling', require('./gap_no_payment_marketplace_transaction_handling'));
-
-// // === Batch 02 Gaps & Frontend Mounts ===
-app.use('/api/gap-no-calendar-integration-only-internal-crop-calendar', require('./gap_no_calendar_integration_only_internal_crop_calendar'));
+// Governed field workflow. Generated gap endpoints are intentionally not mounted.
+app.use('/api/governed-cases', require('./routes/governedCases')({ pool, authMiddleware }));
 
 // // === Custom Views (Field Analytics) ===
 app.use('/api/custom-views', require('./routes/customViews'));
