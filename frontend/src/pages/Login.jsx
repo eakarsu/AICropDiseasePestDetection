@@ -8,8 +8,8 @@ export default function Login({ onLogin }) {
   const [loading, setLoading] = useState(false);
 
   const autoFill = () => {
-    setEmail('admin@cropguard.com');
-    setPassword('password123');
+    setEmail(import.meta.env.VITE_DEMO_EMAIL || '');
+    setPassword(import.meta.env.VITE_DEMO_PASSWORD || '');
     toast.success('Credentials auto-filled!');
   };
 
