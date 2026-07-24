@@ -22,15 +22,12 @@ async function queryAI(prompt, context = '') {
   const model = process.env.OPENROUTER_MODEL || 'anthropic/claude-3-5-sonnet-20241022';
 
   if (!apiKey || apiKey === 'your_openrouter_key_here') {
-    return {
-      response: 'OpenRouter API key not configured. Please add your key to .env file.',
-      model: model,
-      usage: null
-    };
+    throw new Error('OpenRouter API key not configured');
   }
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const baseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -57,13 +54,8 @@ async function queryAI(prompt, context = '') {
 
     const data = await response.json();
 
-    if (data.error) {
-      return {
-        response: `AI Error: ${data.error.message || 'Unknown error'}`,
-        model: model,
-        usage: null
-      };
-    }
+    if (!response.ok || data.error) throw new Error(data.error?.message || `OpenRouter request failed with ${response.status}`);
+    if (!data.choices?.[0]?.message?.content) throw new Error('OpenRouter returned no content');
 
     const content = data.choices?.[0]?.message?.content || 'No response generated';
     const parsed = parseAIJson(content);
@@ -75,11 +67,7 @@ async function queryAI(prompt, context = '') {
       id: data.id || null
     };
   } catch (error) {
-    return {
-      response: `AI service unavailable: ${error.message}`,
-      model: model,
-      usage: null
-    };
+    throw error;
   }
 }
 

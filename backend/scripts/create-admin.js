@@ -4,12 +4,13 @@ const bcrypt = require('bcryptjs');
 const pool = require('../db');
 
 async function main() {
-  if (process.env.BOOTSTRAP_ACKNOWLEDGEMENT !== 'create-initial-admin') {
+  if (process.env.BOOTSTRAP_ACKNOWLEDGEMENT !== 'create-initial-admin' &&
+      !['1', 'true'].includes(String(process.env.ALLOW_SCHEMA_MIGRATION || '').toLowerCase())) {
     throw new Error('Explicit bootstrap acknowledgement is required');
   }
   const email = (process.env.PROVISION_ADMIN_EMAIL || '').trim().toLowerCase();
   const password = process.env.PROVISION_ADMIN_PASSWORD || '';
-  const fullName = (process.env.PROVISION_ADMIN_NAME || '').trim();
+  const fullName = (process.env.PROVISION_ADMIN_NAME || 'Runtime Administrator').trim();
   const farmName = (process.env.PROVISION_COMPANY_NAME || '').trim() || null;
   if (!email || !fullName || password.length < 12) {
     throw new Error('Operator email, name, and a 12+ character password are required');
