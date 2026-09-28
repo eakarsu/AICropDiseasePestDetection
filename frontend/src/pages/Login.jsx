@@ -37,7 +37,7 @@ export default function Login({ onLogin }) {
         </div>
 
         <button className="btn btn-auto-fill btn-full" onClick={autoFill}>
-          ⚡ Auto-Fill Demo Credentials
+          Auto Fill Demo Credentials
         </button>
 
         <form onSubmit={handleSubmit}>
@@ -62,7 +62,7 @@ export default function Login({ onLogin }) {
             />
           </div>
           <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
-            {loading ? 'Signing in...' : '🔐 Sign In'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
 
