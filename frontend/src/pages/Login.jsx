@@ -6,11 +6,14 @@ export default function Login({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const demoAvailable = import.meta.env.VITE_ENABLE_DEMO_CREDENTIAL_AUTOFILL === 'true'
+    && Boolean(import.meta.env.VITE_DEMO_EMAIL && import.meta.env.VITE_DEMO_PASSWORD);
 
   const autoFill = () => {
-    setEmail(import.meta.env.VITE_DEMO_EMAIL || '');
-    setPassword(import.meta.env.VITE_DEMO_PASSWORD || '');
-    toast.success('Credentials auto-filled!');
+    if (!demoAvailable) return;
+    setEmail(import.meta.env.VITE_DEMO_EMAIL);
+    setPassword(import.meta.env.VITE_DEMO_PASSWORD);
+    toast.success('Demo credentials filled. Select Sign In when ready.');
   };
 
   const handleSubmit = async (e) => {
@@ -36,9 +39,9 @@ export default function Login({ onLogin }) {
           <p>AI-Powered Crop Disease & Pest Detection Platform</p>
         </div>
 
-        <button className="btn btn-auto-fill btn-full" onClick={autoFill}>
-          Auto Fill Demo Credentials
-        </button>
+        {demoAvailable ? <button type="button" className="btn btn-auto-fill btn-full" onClick={autoFill}>
+          Fill Demo Credentials
+        </button> : <p role="status">Demo credentials are not configured for this app session. Use your existing account.</p>}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -66,10 +69,6 @@ export default function Login({ onLogin }) {
           </button>
         </form>
 
-        <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>
-          <p>Demo accounts: admin@cropguard.com | jane@cropguard.com | raj@cropguard.com</p>
-          <p>Password: password123</p>
-        </div>
       </div>
     </div>
   );

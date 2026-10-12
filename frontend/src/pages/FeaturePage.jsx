@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import ReactMarkdown from 'react-markdown';
+import FormattedAIReport from '../components/FormattedAIReport';
 import api from '../api';
 
 function AIResponseDisplay({ data, loading }) {
@@ -23,9 +23,7 @@ function AIResponseDisplay({ data, loading }) {
         <span className="ai-badge">AI Analysis</span>
         <span className="ai-model">{data.model || 'AI Model'}</span>
       </div>
-      <div className="ai-response-content">
-        <ReactMarkdown>{data.response || 'No analysis available'}</ReactMarkdown>
-      </div>
+      <FormattedAIReport response={data} title="AI analysis" />
       {data.usage && (
         <div className="ai-response-footer">
           <span>Tokens: {data.usage.total_tokens || 'N/A'}</span>
@@ -80,9 +78,7 @@ function DetailPanel({ item, config, onClose, onEdit, onDelete, onAIAnalyze }) {
                       <span className="ai-badge">Stored AI Analysis</span>
                       <span className="ai-model">{field.label}</span>
                     </div>
-                    <div className="ai-response-content">
-                      <ReactMarkdown>{String(value)}</ReactMarkdown>
-                    </div>
+                    <FormattedAIReport response={value} title={field.label} />
                   </div>
                 </div>
               );

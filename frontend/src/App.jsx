@@ -1,3 +1,4 @@
+import AIReportLibrary from "./components/AIReportLibrary";
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
@@ -73,7 +74,7 @@ function Sidebar({ user, onLogout }) {
           Logout
         </button>
       </div>
-    </div>
+    <AIReportLibrary /></div>
   );
 }
 

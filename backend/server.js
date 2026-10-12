@@ -726,6 +726,14 @@ app.use('/api/custom-views', require('./routes/customViews'));
 // // === Health ===
 app.get('/api/health', (req, res) => res.json({ status: 'ok', service: 'crop-disease-backend', ts: Date.now() }));
 
+
+// Advisory AI reports only; native execution and approval routes stay unchanged.
+const aiWorkspaceSupport = require("./aiWorkspaceAdapters.cjs");
+const aiWorkspaceDatabase = require("./db.js");
+app.use('/api/report-workspace', require("./aiWorkspace.cjs").createAIWorkspaceRouter({
+  pool: aiWorkspaceDatabase, authenticateToken: authMiddleware,
+  aiRateLimiter: aiWorkspaceSupport.createWorkspaceLimiter(), features: require("./aiWorkspaceFeatures.json"),
+}));
 app.listen(PORT, () => {
   console.log(`CropGuard AI Backend running on port ${PORT}`);
 });
