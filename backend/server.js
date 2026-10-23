@@ -719,6 +719,7 @@ app.use('/api/ai', require('./supplyChainCoord'));
 app.use('/api/ai', require('./ipmAutomation'));
 // Governed field workflow. Generated gap endpoints are intentionally not mounted.
 app.use('/api/governed-cases', require('./routes/governedCases')({ pool, authMiddleware }));
+app.use('/api/wave12', require('./routes/wave12')({ pool, authMiddleware }));
 
 // // === Custom Views (Field Analytics) ===
 app.use('/api/custom-views', require('./routes/customViews'));
